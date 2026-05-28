@@ -8,16 +8,3 @@ One of the challenges in NPT Monte Carlo is that it is does not scale well with 
 Literature: J. Chem. Phys. 130, 184106 (2009)  
 
 Coding Level: Difficult 
-
-To Do:
-
-Implement Cell List: Done
-
-Implement Cluster Moves:
-  Using GCA (Geometric Cluster Algorithm): Done
-  Using ECMC (Event Chain Monte Carlo): Not Done
-
-Find Data:
-  Compare simulation speed normal Monte Carlo and improved: Not Done
-  Do the same as Exercise 5 (not useful for GCA): Not Done
-  Find useable data for GCA: Not Done
