@@ -6,6 +6,8 @@ from scipy.optimize import fsolve
 # Ensure this matches the number of particles in your xyz2.dat file
 N_particles = 500 
 
+filename = "pVdata_GCA"
+
 # --- 2. Carnahan-Starling Equation of State (Theoretical) ---
 # We want to plot theoretical P values covering the range of our simulation
 P_star_values = np.linspace(0.1, 12.0, 100)
@@ -28,7 +30,7 @@ for P in P_star_values:
 # --- 3. Load Simulation Data ---
 # Skip the first 2 rows (Headers)
 try:
-    data = np.genfromtxt("pVdata.csv", delimiter=",", skip_header=2)
+    data = np.genfromtxt(f"{filename}.csv", delimiter=",", skip_header=2)
 except FileNotFoundError:
     print("Error: 'pVdata.csv' not found. Make sure you run the C simulation first.")
     exit()
@@ -56,7 +58,7 @@ plt.xlim(0, max(pressure_liquid) + 1)
 plt.ylim(0, max(pf_liquid) + 0.05)
 plt.xlabel(r"Reduced Pressure ($\beta P \sigma^3$)", fontsize=12)
 plt.ylabel(r"Packing Fraction ($\eta$)", fontsize=12)
-plt.title("Equation of State: Hard Sphere Fluid Phase", fontsize=14)
+plt.title("Equation of State: Hard Sphere Fluid Phase (GCA)", fontsize=14)
 plt.legend(loc="lower right", fontsize=11)
 plt.grid(True, linestyle='--', alpha=0.6)
 
