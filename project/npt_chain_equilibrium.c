@@ -36,7 +36,7 @@ double particle_volume;
 double r[N][NDIM];
 double box[NDIM];
 double volume_list[900] = {}; 
-double chain_len = 5.0; //<--------------------------- nieuwe var
+double chain_len = 50.0; //<--------------------------- nieuwe var
 
 /* Equilibration detection settings.
    We measure the volume every output_steps and compare two adjacent
@@ -44,7 +44,7 @@ double chain_len = 5.0; //<--------------------------- nieuwe var
 const int eq_min_steps = 10000;          // do not even test before this many MC steps
 const int eq_block_samples = 50;         // volume samples per block
 const int eq_required_stable = 3;        // require this many stable checks in a row
-const double eq_rel_tol = 0.001;         // 0.5 percent relative block-mean tolerance
+const double eq_rel_tol = 0.0005;         // 0.05 percent relative block-mean tolerance
 
 
 //Self made variables for easier computing
@@ -56,6 +56,13 @@ int *lscl = NULL; // Size: N (n_particles)
 int n_cells[NDIM];
 double cell_size[NDIM];
 int total_cells;
+
+/* Safe modulo for periodic cell indices.
+   In C, (-1) % n is negative, so we must fix it explicitly. */
+static inline int positive_mod(int a, int m){
+    int rmod = a % m;
+    return (rmod < 0) ? rmod + m : rmod;
+}
 
 // Call this in main() after read_data()
 void allocate_cell_list(void) {
@@ -85,6 +92,10 @@ int get_cell_index(double rx, double ry, double rz) {
     int cz = (NDIM == 3) ? (int)(rz / cell_size[2]) : 0;
 
     // Safety checks for boundary float precision
+    if(cx < 0) cx = 0;
+    if(cy < 0) cy = 0;
+    if(NDIM == 3 && cz < 0) cz = 0;
+
     if(cx >= n_cells[0]) cx = n_cells[0] - 1;
     if(cy >= n_cells[1]) cy = n_cells[1] - 1;
     if(NDIM == 3 && cz >= n_cells[2]) cz = n_cells[2] - 1;
@@ -286,14 +297,14 @@ int check_cell_overlaps(int target_particle, double rx, double ry, double rz, do
     int cz = (NDIM == 3) ? (int)(rz / cell_size[2]) : 0;
 
     for (int ox = -1; ox <= 1; ox++) {
-        int n_cx = (cx + ox + n_cells[0]) % n_cells[0];
+        int n_cx = positive_mod(cx + ox, n_cells[0]);
         
         for (int oy = -1; oy <= 1; oy++) {
-            int n_cy = (cy + oy + n_cells[1]) % n_cells[1];
+            int n_cy = positive_mod(cy + oy, n_cells[1]);
             
             int z_loops = (NDIM == 3) ? 1 : 0;
             for (int oz = -z_loops; oz <= z_loops; oz++) {
-                int n_cz = (NDIM == 3) ? (cz + oz + n_cells[2]) % n_cells[2] : 0;
+                int n_cz = (NDIM == 3) ? positive_mod(cz + oz, n_cells[2]) : 0;
 
                 int neighbor_cell = n_cx + n_cy * n_cells[0];
                 if (NDIM == 3) neighbor_cell += n_cz * n_cells[0] * n_cells[1];
@@ -428,9 +439,10 @@ int move_particle_chain(void){
 
     const double sigma = diameter;
     const double sigma2 = sigma * sigma;
-    const double eps = 1e-12;
+    const double eps = 1e-10;
 
     double remaining = chain_len;
+    if(remaining <= eps) return 0;
 
     /* Pick random starting particle */
     int current_particle = (int)(n_particles * dsfmt_genrand());
@@ -452,9 +464,41 @@ int move_particle_chain(void){
     ey *= invnorm;
     ez *= invnorm;
 
+    /*
+       Important fix for large chain_len:
+
+       The collision calculation below uses the minimum-image convention.
+       That is only safe for a displacement segment shorter than roughly half
+       the box length.  Therefore a long event chain is split into smaller
+       straight pieces.  The total chain length is still chain_len, but each
+       search stays local and the cell-list indices remain well behaved.
+    */
+    double min_box = box[0];
+    for(int d = 1; d < NDIM; d++){
+        if(box[d] < min_box) min_box = box[d];
+    }
+
+    double max_segment = 0.45 * min_box - sigma;
+    if(max_segment < 0.25 * sigma){
+        max_segment = 0.25 * sigma;
+    }
+
+    int chain_iterations = 0;
+    const int max_chain_iterations = 1000000;
+
     while(remaining > eps){
 
-        double best_s = remaining;
+        chain_iterations++;
+        if(chain_iterations > max_chain_iterations){
+            printf("Warning: event chain stopped early after too many internal collisions. "
+                   "Try reducing chain_len. Remaining length = %.6lf\n", remaining);
+            break;
+        }
+
+        double segment = remaining;
+        if(segment > max_segment) segment = max_segment;
+
+        double best_s = segment;
         int hit_particle = -1;
 
         double x = r[current_particle][0];
@@ -463,18 +507,18 @@ int move_particle_chain(void){
 
         int old_cell = get_cell_index(x, y, z);
 
-        /*
-           Use the cell list to search only particles that can possibly collide.
-           A particle can only be hit during the remaining chain length if its
-           current center is within sigma + remaining of the moving particle.
-           Because cell_size is about sigma, this usually means only a few cells.
-        */
-        double search_radius = sigma + remaining;
+        /* Search only the cells that can contain a collision partner during
+           this short segment. */
+        double search_radius = sigma + segment;
         double search_radius2 = search_radius * search_radius;
 
         int cx = (int)(x / cell_size[0]);
         int cy = (int)(y / cell_size[1]);
         int cz = (NDIM == 3) ? (int)(z / cell_size[2]) : 0;
+
+        if(cx < 0) cx = 0;
+        if(cy < 0) cy = 0;
+        if(NDIM == 3 && cz < 0) cz = 0;
 
         if(cx >= n_cells[0]) cx = n_cells[0] - 1;
         if(cy >= n_cells[1]) cy = n_cells[1] - 1;
@@ -484,15 +528,29 @@ int move_particle_chain(void){
         int oy_max = (int)ceil(search_radius / cell_size[1]);
         int oz_max = (NDIM == 3) ? (int)ceil(search_radius / cell_size[2]) : 0;
 
+        /* If the search range covers the whole box in a direction, loop over
+           every cell in that direction once. This avoids repeated cells and
+           prevents negative cell indices for very large chain lengths. */
+        int all_x = (2 * ox_max + 1 >= n_cells[0]);
+        int all_y = (2 * oy_max + 1 >= n_cells[1]);
+        int all_z = (NDIM == 3) ? (2 * oz_max + 1 >= n_cells[2]) : 1;
+
+        int x_count = all_x ? n_cells[0] : (2 * ox_max + 1);
+        int y_count = all_y ? n_cells[1] : (2 * oy_max + 1);
+        int z_count = (NDIM == 3) ? (all_z ? n_cells[2] : (2 * oz_max + 1)) : 1;
+
         /* Find nearest collision in the chain direction using cell-list candidates */
-        for(int ox = -ox_max; ox <= ox_max; ox++){
-            int ncx = (cx + ox + n_cells[0]) % n_cells[0];
+        for(int ix = 0; ix < x_count; ix++){
+            int ncx = all_x ? ix : positive_mod(cx + ix - ox_max, n_cells[0]);
 
-            for(int oy = -oy_max; oy <= oy_max; oy++){
-                int ncy = (cy + oy + n_cells[1]) % n_cells[1];
+            for(int iy = 0; iy < y_count; iy++){
+                int ncy = all_y ? iy : positive_mod(cy + iy - oy_max, n_cells[1]);
 
-                for(int oz = -oz_max; oz <= oz_max; oz++){
-                    int ncz = (NDIM == 3) ? (cz + oz + n_cells[2]) % n_cells[2] : 0;
+                for(int iz = 0; iz < z_count; iz++){
+                    int ncz = 0;
+                    if(NDIM == 3){
+                        ncz = all_z ? iz : positive_mod(cz + iz - oz_max, n_cells[2]);
+                    }
 
                     int cell_idx = ncx + ncy * n_cells[0];
                     if(NDIM == 3) cell_idx += ncz * n_cells[0] * n_cells[1];
@@ -511,20 +569,9 @@ int move_particle_chain(void){
 
                             double r2 = dx*dx + dy*dy + dz*dz;
 
-                            /* Too far away to be reached during the remaining chain */
                             if(r2 <= search_radius2){
-
-                                /*
-                                   Collision condition:
-                                   |rij + s e|^2 = sigma^2
-
-                                   b = rij . e
-                                   c = rij^2 - sigma^2
-                                   s = -b - sqrt(b^2 - c)
-                                */
                                 double b = dx*ex + dy*ey + dz*ez;
 
-                                /* If b >= 0, particle j is not in front of the moving particle */
                                 if(b < 0.0){
                                     double c = r2 - sigma2;
                                     double discriminant = b*b - c;
@@ -547,7 +594,7 @@ int move_particle_chain(void){
             }
         }
 
-        /* Move current particle either to next collision or to end of chain */
+        /* Move current particle either to next collision or to the end of this segment */
         r[current_particle][0] += best_s * ex;
         r[current_particle][1] += best_s * ey;
         r[current_particle][2] += best_s * ez;
@@ -556,7 +603,6 @@ int move_particle_chain(void){
         wrap_coordinate(&r[current_particle][1], box[1]);
         wrap_coordinate(&r[current_particle][2], box[2]);
 
-        /* Keep the linked-cell structure correct after this displacement */
         int new_cell = get_cell_index(r[current_particle][0],
                                       r[current_particle][1],
                                       r[current_particle][2]);
@@ -564,17 +610,17 @@ int move_particle_chain(void){
 
         remaining -= best_s;
 
-        /* No collision before chain ends */
-        if(hit_particle < 0){
-            break;
+        /* If this segment ended in a collision, transfer the lifting variable
+           to the particle that was hit. If not, the same particle continues
+           into the next short segment until the total chain_len is exhausted. */
+        if(hit_particle >= 0){
+            current_particle = hit_particle;
         }
-
-        /* Continue chain with the particle that was hit */
-        current_particle = hit_particle;
     }
 
     return 1;
 }
+
 
 
 void write_data(int step){
@@ -788,8 +834,8 @@ int main(int argc, char* argv[]){
     fprintf(trace_file, "betaP,step,volume,equilibrated,old_block_mean,new_block_mean,diff,tolerance,stable_checks\n");
 
     // Define the pressures for the liquid branch to check against Carnahan-Starling
-    double liquid_pressures[] = {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
-   // double liquid_pressures[] = {0.5, 2.0, 3.0, 5.0, 8.0};
+    //double liquid_pressures[] = {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
+    double liquid_pressures[] = {0.5, 2.0, 3.0, 5.0, 8.0};
 
   //  double liquid_pressures[] = {3.0, 4.0, 5.0, 6.0};
 
