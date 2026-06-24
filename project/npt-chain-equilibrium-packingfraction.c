@@ -37,7 +37,7 @@ double particle_volume;
 double r[N][NDIM];
 double box[NDIM];
 double volume_list[900] = {}; 
-double chain_len = 3.0 ; //<--------------------------- nieuwe var
+double chain_len = 0.5 ; //<--------------------------- nieuwe var
 
 
 //Self made variables for easier computing
@@ -718,9 +718,9 @@ int main(int argc, char* argv[]){
     fprintf(csv_file, "P_Solid,V_Solid,P_Liquid,V_Liquid\n");
 
     // Define the pressures for the liquid branch to check against Carnahan-Starling
-    double liquid_pressures[] = {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
+  //  double liquid_pressures[] = {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
    // double liquid_pressures[] = {0.5, 2.0, 3.0, 5.0, 8.0};
-
+    double liquid_pressures[] = {1.0};
   //  double liquid_pressures[] = {3.0, 4.0, 5.0, 6.0};
 
     int num_pressures = sizeof(liquid_pressures) / sizeof(liquid_pressures[0]);
@@ -745,7 +745,7 @@ int main(int argc, char* argv[]){
 
         while(!equilibrium_reached){
             
-            if (get_random_double(0.0, 1.0) < 0.50) { //<--------------------------------------------------------------
+            if (get_random_double(0.0, 1.0) < 0.90) { //<--------------------------------------------------------------
                 // 90% Probability: Standard Local Sweep
                 for (int n = 0; n < n_particles; ++n) {
                     move_accepted += move_particle_classic();
